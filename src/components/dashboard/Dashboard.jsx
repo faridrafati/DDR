@@ -4,6 +4,13 @@ import { supabase } from '../../lib/supabase';
 import { useNavigate } from 'react-router-dom';
 import { exportToPDF } from '../../utils/pdfExport';
 import { exportToExcel } from '../../utils/excelExport';
+import ShamsiDatePicker from '../common/ShamsiDatePicker';
+import {
+  formatShamsiDate,
+  compareShamsiDates,
+  getCurrentShamsiDate,
+  isSameShamsiMonth
+} from '../../utils/persianDate';
 import './Dashboard.css';
 
 const Dashboard = () => {
@@ -12,10 +19,35 @@ const Dashboard = () => {
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState({ wellName: '', startDate: '', endDate: '' });
+  const [stats, setStats] = useState({
+    totalReports: 0,
+    totalWells: 0,
+    maxDepth: 0,
+    avgProgress: 0,
+    totalDrillingHours: 0,
+    reportsThisMonth: 0
+  });
 
   useEffect(() => {
     fetchReports();
+    fetchWellsCount();
   }, []);
+
+  const fetchWellsCount = async () => {
+    try {
+      const { count, error } = await supabase
+        .from('wells')
+        .select('*', { count: 'exact', head: true });
+
+      console.log('Wells count result:', { count, error });
+
+      if (!error && count !== null) {
+        setStats(prev => ({ ...prev, totalWells: count }));
+      }
+    } catch (error) {
+      console.error('Error fetching wells count:', error);
+    }
+  };
 
   const fetchReports = async () => {
     try {
@@ -32,6 +64,32 @@ const Dashboard = () => {
 
       if (error) throw error;
       setReports(data || []);
+
+      // Calculate statistics
+      if (data && data.length > 0) {
+        const maxDepth = Math.max(...data.map(r => r.hole_depth_end || 0));
+        const totalProgress = data.reduce((sum, r) => sum + (r.progress_24hr || 0), 0);
+        const avgProgress = data.length > 0 ? totalProgress / data.length : 0;
+        const totalDrillingHours = data.reduce((sum, r) => sum + (r.drilling_time || 0), 0);
+
+        // Count reports from this Shamsi month
+        const currentShamsi = getCurrentShamsiDate();
+        const currentMonthStr = currentShamsi
+          ? `${currentShamsi.jy}-${String(currentShamsi.jm).padStart(2, '0')}-01`
+          : '';
+        const thisMonth = data.filter(r => {
+          return r.report_date && currentMonthStr && isSameShamsiMonth(r.report_date, currentMonthStr);
+        }).length;
+
+        setStats(prev => ({
+          ...prev,
+          totalReports: data.length,
+          maxDepth,
+          avgProgress: avgProgress.toFixed(1),
+          totalDrillingHours: totalDrillingHours.toFixed(1),
+          reportsThisMonth: thisMonth
+        }));
+      }
     } catch (error) {
       console.error('Error fetching reports:', error);
       alert('Error loading reports');
@@ -46,13 +104,13 @@ const Dashboard = () => {
   };
 
   const filteredReports = reports.filter(report => {
-    if (filter.wellName && !report.well_name.toLowerCase().includes(filter.wellName.toLowerCase())) {
+    if (filter.wellName && !report.well_name?.toLowerCase().includes(filter.wellName.toLowerCase())) {
       return false;
     }
-    if (filter.startDate && report.report_date < filter.startDate) {
+    if (filter.startDate && report.report_date && compareShamsiDates(report.report_date, filter.startDate) < 0) {
       return false;
     }
-    if (filter.endDate && report.report_date > filter.endDate) {
+    if (filter.endDate && report.report_date && compareShamsiDates(report.report_date, filter.endDate) > 0) {
       return false;
     }
     return true;
@@ -118,6 +176,12 @@ const Dashboard = () => {
                 + New Report
               </button>
             )}
+            <button
+              onClick={() => navigate('/analytics')}
+              className="btn-analytics"
+            >
+              Analytics & Charts
+            </button>
             {profile?.role === 'admin' && (
               <button
                 onClick={() => navigate('/admin')}
@@ -134,6 +198,52 @@ const Dashboard = () => {
       </header>
 
       <div className="dashboard-content">
+        {/* Summary Stats Cards */}
+        <div className="stats-overview">
+          <div className="stat-card">
+            <div className="stat-icon reports-icon">📋</div>
+            <div className="stat-info">
+              <span className="stat-value">{stats.totalReports}</span>
+              <span className="stat-label">Total Reports</span>
+            </div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-icon wells-icon">🛢️</div>
+            <div className="stat-info">
+              <span className="stat-value">{stats.totalWells}</span>
+              <span className="stat-label">Active Wells</span>
+            </div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-icon depth-icon">📏</div>
+            <div className="stat-info">
+              <span className="stat-value">{stats.maxDepth.toLocaleString()}</span>
+              <span className="stat-label">Max Depth (ft)</span>
+            </div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-icon progress-icon">📈</div>
+            <div className="stat-info">
+              <span className="stat-value">{stats.avgProgress}</span>
+              <span className="stat-label">Avg 24hr Progress (ft)</span>
+            </div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-icon drilling-icon">⏱️</div>
+            <div className="stat-info">
+              <span className="stat-value">{stats.totalDrillingHours}</span>
+              <span className="stat-label">Total Drilling Hours</span>
+            </div>
+          </div>
+          <div className="stat-card highlight">
+            <div className="stat-icon month-icon">📅</div>
+            <div className="stat-info">
+              <span className="stat-value">{stats.reportsThisMonth}</span>
+              <span className="stat-label">Reports This Month</span>
+            </div>
+          </div>
+        </div>
+
         <div className="filters-section">
           <h2>Filters</h2>
           <div className="filters-grid">
@@ -148,26 +258,20 @@ const Dashboard = () => {
                 placeholder="Search by well name..."
               />
             </div>
-            <div className="form-group">
-              <label htmlFor="startDate">Start Date</label>
-              <input
-                id="startDate"
-                name="startDate"
-                type="date"
-                value={filter.startDate}
-                onChange={handleFilterChange}
-              />
-            </div>
-            <div className="form-group">
-              <label htmlFor="endDate">End Date</label>
-              <input
-                id="endDate"
-                name="endDate"
-                type="date"
-                value={filter.endDate}
-                onChange={handleFilterChange}
-              />
-            </div>
+            <ShamsiDatePicker
+              label="Start Date (Shamsi)"
+              id="startDate"
+              value={filter.startDate}
+              onChange={(date) => setFilter(prev => ({ ...prev, startDate: date }))}
+              placeholder="Select start date"
+            />
+            <ShamsiDatePicker
+              label="End Date (Shamsi)"
+              id="endDate"
+              value={filter.endDate}
+              onChange={(date) => setFilter(prev => ({ ...prev, endDate: date }))}
+              placeholder="Select end date"
+            />
           </div>
         </div>
 
@@ -192,7 +296,7 @@ const Dashboard = () => {
               <table className="reports-table">
                 <thead>
                   <tr>
-                    <th>Date</th>
+                    <th>Date (Shamsi)</th>
                     <th>Well Name</th>
                     <th>Rig</th>
                     <th>Depth</th>
@@ -204,7 +308,7 @@ const Dashboard = () => {
                 <tbody>
                   {filteredReports.map(report => (
                     <tr key={report.id}>
-                      <td>{new Date(report.report_date).toLocaleDateString()}</td>
+                      <td>{formatShamsiDate(report.report_date, 'numeric')}</td>
                       <td className="well-name">{report.well_name}</td>
                       <td>{report.rig_name || '-'}</td>
                       <td>{report.hole_depth_end || '-'} ft</td>

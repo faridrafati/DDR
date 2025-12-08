@@ -7,6 +7,7 @@ import Dashboard from './components/dashboard/Dashboard';
 import ReportForm from './components/reports/ReportForm';
 import ReportView from './components/reports/ReportView';
 import AdminPanel from './components/admin/AdminPanel';
+import Analytics from './components/analytics/Analytics';
 
 function App() {
   return (
@@ -48,6 +49,15 @@ function App() {
             element={
               <ProtectedRoute requireRole="admin">
                 <AdminPanel />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/analytics"
+            element={
+              <ProtectedRoute>
+                <Analytics />
               </ProtectedRoute>
             }
           />
